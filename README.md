@@ -2,6 +2,8 @@
 
 Vue 3 plugin + composables for the [ReachBell](https://reachbell.com) SDK.
 
+Full documentation: https://docs.reachbell.com
+
 ## Install
 
 ```bash
