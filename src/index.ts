@@ -15,7 +15,16 @@
  * a reactive ref.
  */
 import { inject, onMounted, ref, type App, type InjectionKey, type Ref } from 'vue';
-import { ReachBell, type ReachBellConfig, type SubscribeResult, type ApiResult } from '@reachbell/sdk';
+import {
+  ReachBell,
+  type ReachBellConfig,
+  type SubscribeResult,
+  type ApiResult,
+  type ToastOptions,
+  type BannerOptions,
+  type NotificationCenterOptions,
+  type NotificationHistoryItem,
+} from '@reachbell/sdk';
 
 export interface ReachBellApi {
   /** Has the SDK's bootstrap settled (success OR failure)? */
@@ -25,6 +34,9 @@ export interface ReachBellApi {
   prompt:     () => Promise<SubscribeResult>;
   identify:   (externalId: string) => Promise<ApiResult>;
   tag:        (tags: string[]) => Promise<ApiResult>;
+  showToast:  (opts: ToastOptions) => () => void;
+  showBanner: (opts: BannerOptions) => () => void;
+  showNotificationCenter: (opts?: NotificationCenterOptions) => () => void;
   /** Direct access to the underlying SDK if you need it. */
   sdk:        typeof ReachBell;
 }
@@ -77,6 +89,9 @@ export const ReachBellPlugin = {
       prompt,
       identify: (externalId: string) => ReachBell.identify(externalId),
       tag:      (tags: string[]) => ReachBell.tag(tags),
+      showToast:  (opts: ToastOptions) => ReachBell.showToast(opts),
+      showBanner: (opts: BannerOptions) => ReachBell.showBanner(opts),
+      showNotificationCenter: (opts?: NotificationCenterOptions) => ReachBell.showNotificationCenter(opts),
       sdk:      ReachBell,
     };
 
@@ -114,4 +129,12 @@ export function useNotificationPermission() {
   return { permission, refresh };
 }
 
-export type { ReachBellConfig, SubscribeResult, ApiResult } from '@reachbell/sdk';
+export type {
+  ReachBellConfig,
+  SubscribeResult,
+  ApiResult,
+  ToastOptions,
+  BannerOptions,
+  NotificationCenterOptions,
+  NotificationHistoryItem,
+} from '@reachbell/sdk';

@@ -35,6 +35,6 @@
     "@rollup/plugin-typescript": "^11.0.0",
     "tslib": "^2.6.0",
     "vue": "^3.4.0",
-    "@reachbell/sdk": "file:../sdk"
+    "@reachbell/sdk": "file:../reachbell-sdk"
   }
 }
