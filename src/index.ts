@@ -53,33 +53,62 @@ export const ReachBellPlugin = {
     const isReady    = ref(false);
     const permission = ref<NotificationPermission | null>(null);
 
-    // The SDK's own idempotency guard makes double-init a no-op, but the
-    // refs only need to update once per app instance.
     let initialised = false;
+    let permissionStatus: PermissionStatus | null = null;
+    let disposed = false;
+
+    const syncPermission = () => {
+      if (typeof Notification !== 'undefined') permission.value = Notification.permission;
+    };
+
+    const watchPermission = () => {
+      if (typeof navigator === 'undefined' || !navigator.permissions || typeof navigator.permissions.query !== 'function') return;
+      try {
+        navigator.permissions
+          .query({ name: 'notifications' })
+          .then((status) => {
+            if (disposed || typeof status.addEventListener !== 'function') return;
+            permissionStatus = status;
+            status.addEventListener('change', syncPermission);
+          })
+          .catch(() => {});
+      } catch {}
+    };
 
     const ensureBootstrap = () => {
-      if (initialised) return;
+      if (initialised || typeof window === 'undefined') return;
       initialised = true;
 
       ReachBell.init(options);
-
-      if (typeof Notification !== 'undefined') {
-        permission.value = Notification.permission;
-      }
+      syncPermission();
+      watchPermission();
 
       ReachBell.ready
         .catch(() => { /* SDK warnOnce already fired */ })
-        .finally(() => { isReady.value = true; });
+        .finally(() => {
+          isReady.value = true;
+          syncPermission();
+        });
     };
 
-    // Bootstrap on the next tick rather than synchronously so SSR-rendered
-    // apps don't crash on `window` access during install.
-    if (typeof window !== 'undefined') ensureBootstrap();
+    app.mixin({
+      mounted() {
+        ensureBootstrap();
+      },
+    });
+
+    const unmount = app.unmount.bind(app);
+    app.unmount = () => {
+      disposed = true;
+      permissionStatus?.removeEventListener('change', syncPermission);
+      permissionStatus = null;
+      unmount();
+    };
 
     const prompt = async (): Promise<SubscribeResult> => {
       ensureBootstrap();
       const r = await ReachBell.prompt();
-      if (typeof Notification !== 'undefined') permission.value = Notification.permission;
+      syncPermission();
       return r;
     };
 

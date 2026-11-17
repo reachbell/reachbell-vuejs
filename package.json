@@ -1,6 +1,6 @@
 {
   "name": "@reachbell/vue",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Vue 3 composable + Provider for the ReachBell SDK — push notifications, identify, tag.",
   "main": "dist/index.cjs",
   "module": "dist/index.mjs",
@@ -38,7 +38,7 @@
     "node": ">=18"
   },
   "peerDependencies": {
-    "@reachbell/sdk": "^1.0.0",
+    "@reachbell/sdk": "^1.0.10",
     "vue": "^3.3.0"
   },
   "devDependencies": {
