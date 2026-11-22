@@ -116,8 +116,11 @@ export const ReachBellPlugin = {
       isReady,
       permission,
       prompt,
-      identify: (externalId: string) => ReachBell.identify(externalId),
-      tag:      (tags: string[]) => ReachBell.tag(tags),
+      // Like prompt(), make sure the SDK is initialised so calls made from
+      // setup() (before any component has mounted) don't fail with
+      // sdk_not_initialized.
+      identify: (externalId: string) => { ensureBootstrap(); return ReachBell.identify(externalId); },
+      tag:      (tags: string[]) => { ensureBootstrap(); return ReachBell.tag(tags); },
       showToast:  (opts: ToastOptions) => ReachBell.showToast(opts),
       showBanner: (opts: BannerOptions) => ReachBell.showBanner(opts),
       showNotificationCenter: (opts?: NotificationCenterOptions) => ReachBell.showNotificationCenter(opts),
