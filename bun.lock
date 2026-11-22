@@ -13,7 +13,7 @@
         "vue": "^3.4.0",
       },
       "peerDependencies": {
-        "@reachbell/sdk": "^1.0.0",
+        "@reachbell/sdk": "^1.1.0",
         "vue": "^3.3.0",
       },
     },
@@ -75,7 +75,7 @@
 
     "@jridgewell/sourcemap-codec": ["@jridgewell/sourcemap-codec@1.5.5", "", {}, "sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og=="],
 
-    "@reachbell/sdk": ["@reachbell/sdk@file:../reachbell-sdk", { "devDependencies": { "@rollup/plugin-typescript": "^11.0.0", "happy-dom": "^20.10.2", "rollup": "^4.0.0", "tslib": "^2.6.0", "typescript": "^5.0.0", "vitest": "^2.0.0" } }],
+    "@reachbell/sdk": ["@reachbell/sdk@file:../reachbell-sdk", { "devDependencies": { "@rollup/plugin-typescript": "^11.0.0", "happy-dom": "^20.10.2", "rollup": "^4.0.0", "tslib": "^2.6.0", "typescript": "^5.0.0", "vitest": "^2.0.0" }, "bin": { "reachbell": "bin/reachbell.js" } }],
 
     "@rollup/plugin-typescript": ["@rollup/plugin-typescript@11.1.6", "", { "dependencies": { "@rollup/pluginutils": "^5.1.0", "resolve": "^1.22.1" }, "peerDependencies": { "rollup": "^2.14.0||^3.0.0||^4.0.0", "tslib": "*", "typescript": ">=3.7.0" }, "optionalPeers": ["rollup", "tslib"] }, "sha512-R92yOmIACgYdJ7dJ97p4K69I8gg6IEHt8M7dUBxN3W6nrO8uUxX5ixl0yU/N3aZTi8WhPuICvOHXQvF6FaykAA=="],
 
