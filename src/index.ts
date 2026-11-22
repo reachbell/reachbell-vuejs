@@ -13,6 +13,11 @@
  * idempotency guard handles double-init via HMR), exposes the same
  * surface as the React wrapper, and tracks Notification permission as
  * a reactive ref.
+ *
+ * Initialising the SDK and touching reactive state are kept apart:
+ * prompt/identify/tag may init from setup(), but `permission` and
+ * `isReady` only change after the root app has mounted, so SSR
+ * hydration sees the same values the server rendered.
  */
 import { inject, onMounted, ref, type App, type InjectionKey, type Ref } from 'vue';
 import {
@@ -20,6 +25,7 @@ import {
   type ReachBellConfig,
   type SubscribeResult,
   type ApiResult,
+  type IdentifyOptions,
   type ToastOptions,
   type BannerOptions,
   type NotificationCenterOptions,
@@ -32,7 +38,8 @@ export interface ReachBellApi {
   /** Current Notification permission state — null on the server / first render. */
   permission: Ref<NotificationPermission | null>;
   prompt:     () => Promise<SubscribeResult>;
-  identify:   (externalId: string) => Promise<ApiResult>;
+  /** Link the subscription to your user id; `null` unlinks it (logout). */
+  identify:   (externalId: string | null, opts?: IdentifyOptions) => Promise<ApiResult>;
   tag:        (tags: string[]) => Promise<ApiResult>;
   showToast:  (opts: ToastOptions) => () => void;
   showBanner: (opts: BannerOptions) => () => void;
@@ -54,6 +61,8 @@ export const ReachBellPlugin = {
     const permission = ref<NotificationPermission | null>(null);
 
     let initialised = false;
+    let mounted = false;
+    let readySettled = false;
     let permissionStatus: PermissionStatus | null = null;
     let disposed = false;
 
@@ -75,27 +84,46 @@ export const ReachBellPlugin = {
       } catch {}
     };
 
-    const ensureBootstrap = () => {
-      if (initialised || typeof window === 'undefined') return;
-      initialised = true;
-
-      ReachBell.init(options);
+    const markReady = () => {
+      isReady.value = true;
       syncPermission();
-      watchPermission();
+    };
 
+    /**
+     * Init the SDK only — no reactive writes, so it is safe from setup()
+     * during hydration. Skipped on the server and without an apiKey.
+     */
+    const initSdk = () => {
+      if (initialised || typeof window === 'undefined' || !options?.apiKey) return;
+      initialised = true;
+      ReachBell.init(options);
       ReachBell.ready
         .catch(() => { /* SDK warnOnce already fired */ })
         .finally(() => {
-          isReady.value = true;
-          syncPermission();
+          readySettled = true;
+          if (mounted && !disposed) markReady();
         });
     };
 
-    app.mixin({
-      mounted() {
-        ensureBootstrap();
-      },
-    });
+    /** Runs once, after the root app has mounted (client only). */
+    const onAppMounted = () => {
+      if (mounted) return;
+      mounted = true;
+      initSdk();
+      syncPermission();
+      watchPermission();
+      if (readySettled) markReady();
+    };
+
+    // Root-only, one-shot hook: app.mount() is client-side (SSR renders
+    // with renderToString) and returns after the whole tree has mounted or
+    // hydrated — no global mixin on every component needed.
+    const mount = app.mount.bind(app);
+    app.mount = ((...args: Parameters<App['mount']>) => {
+      const instance = mount(...args);
+      onAppMounted();
+      return instance;
+    }) as App['mount'];
 
     const unmount = app.unmount.bind(app);
     app.unmount = () => {
@@ -106,8 +134,9 @@ export const ReachBellPlugin = {
     };
 
     const prompt = async (): Promise<SubscribeResult> => {
-      ensureBootstrap();
+      initSdk();
       const r = await ReachBell.prompt();
+      // prompt() needs a user gesture, so we're past hydration by now.
       syncPermission();
       return r;
     };
@@ -118,9 +147,9 @@ export const ReachBellPlugin = {
       prompt,
       // Like prompt(), make sure the SDK is initialised so calls made from
       // setup() (before any component has mounted) don't fail with
-      // sdk_not_initialized.
-      identify: (externalId: string) => { ensureBootstrap(); return ReachBell.identify(externalId); },
-      tag:      (tags: string[]) => { ensureBootstrap(); return ReachBell.tag(tags); },
+      // sdk_not_initialized. Init only: no permission sync during setup().
+      identify: (externalId: string | null, opts?: IdentifyOptions) => { initSdk(); return ReachBell.identify(externalId, opts); },
+      tag:      (tags: string[]) => { initSdk(); return ReachBell.tag(tags); },
       showToast:  (opts: ToastOptions) => ReachBell.showToast(opts),
       showBanner: (opts: BannerOptions) => ReachBell.showBanner(opts),
       showNotificationCenter: (opts?: NotificationCenterOptions) => ReachBell.showNotificationCenter(opts),
@@ -165,6 +194,7 @@ export type {
   ReachBellConfig,
   SubscribeResult,
   ApiResult,
+  IdentifyOptions,
   ToastOptions,
   BannerOptions,
   NotificationCenterOptions,

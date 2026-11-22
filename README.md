@@ -53,9 +53,11 @@ async function subscribe() {
 | `useReachBell()` | Composable. Returns `{ isReady, permission, prompt, identify, tag, showToast, showBanner, showNotificationCenter, sdk }`. `isReady` and `permission` are reactive refs; the rest are plain functions. `permission` follows the browser permission, including changes made by the SDK's auto-prompt or bell widget where `navigator.permissions` is supported. |
 | `useNotificationPermission()` | Convenience composable. Returns `{ permission, refresh }` for components that only care about the permission state. |
 
-`prompt() / identify() / tag()` are thin wrappers around `@reachbell/sdk`. See the SDK docs for return shapes.
+`prompt() / identify() / tag()` are thin wrappers around `@reachbell/sdk`. See the SDK docs for return shapes. They initialise the SDK on first use, so calling them from `setup()` works. `identify(null)` unlinks the user on logout, and `identify(id, { hash })` passes an identity-verification hash through to the SDK.
 
-The plugin is SSR-safe: the SDK is initialised and `Notification` is read only after the app mounts in the browser, so `permission` is `null` and `isReady` is `false` on the server and during hydration, and the first client render matches the server HTML.
+Requires `@reachbell/sdk` 1.1.0 or newer. Install the plugin before `app.mount()`; without an `apiKey` the SDK is not initialised.
+
+The plugin is SSR-safe: the SDK is initialised only in the browser (when the root app mounts, or earlier from a `prompt`/`identify`/`tag` call), and `Notification` is read only after the app mounts, so `permission` is `null` and `isReady` is `false` on the server and during hydration, and the first client render matches the server HTML.
 
 ## License
 
