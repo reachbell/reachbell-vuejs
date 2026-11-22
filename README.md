@@ -57,7 +57,7 @@ async function subscribe() {
 
 Requires `@reachbell/sdk` 1.1.0 or newer. Install the plugin before `app.mount()` (in development a `console.warn` flags a late install); without an `apiKey` the SDK is not initialised by the plugin, but `isReady` still follows an SDK your app initialised itself.
 
-The plugin is SSR-safe: the SDK is initialised only in the browser (when the root app mounts, or earlier from a `prompt`/`identify`/`tag` call), and `Notification` is read only after the app mounts, so `permission` is `null` and `isReady` is `false` on the server and during hydration, and the first client render matches the server HTML. The first update waits until hydration is over — a tick plus an animation frame after mount, and in Nuxt until `app:suspense:resolve` — so async `<Suspense>` boundaries hydrate against the server values too.
+The plugin is SSR-safe: the SDK is initialised only in the browser (when the root app mounts, or earlier from a `prompt`/`identify`/`tag` call), and `Notification` is read only after the app mounts, so `permission` is `null` and `isReady` is `false` on the server and during hydration, and the first client render matches the server HTML. The first update waits until hydration is over — a tick plus an animation frame (or 50 ms, whichever comes first, so background tabs that pause animation frames still update) after mount, and in Nuxt until `app:suspense:resolve` — so async `<Suspense>` boundaries hydrate against the server values too. The plugin's `reachbell:init` window listener is only added once the app mounts and is removed on `app.unmount()` (also via `app.onUnmount` on Vue 3.5+), so an app that installs the plugin but is never mounted leaves nothing behind.
 
 ## License
 

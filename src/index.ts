@@ -77,13 +77,23 @@ interface NuxtLike {
 /**
  * Run `fn` once hydration is over. Nuxt resolves async Suspense boundaries
  * after app.mount() returns, so wait for its `app:suspense:resolve` hook
- * when it is hydrating; otherwise (and afterwards) wait a tick plus a frame.
+ * when it is hydrating; otherwise (and afterwards) wait a tick plus a frame
+ * (or 50ms, whichever comes first).
  */
 function afterHydration(app: App, fn: () => void): void {
   const later = () => {
     void nextTick(() => {
-      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => fn());
-      else setTimeout(fn, 0);
+      // Race a frame against a short timer: background tabs throttle or
+      // pause requestAnimationFrame, and the first write must still happen.
+      let done = false;
+      const run = () => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        fn();
+      };
+      const timer = setTimeout(run, 50);
+      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run);
     });
   };
   const nuxt = ((app as unknown as { $nuxt?: NuxtLike }).$nuxt
@@ -181,12 +191,28 @@ export const ReachBellPlugin = {
     };
 
     const onReInit = () => trackReady();
-    if (typeof window !== 'undefined') window.addEventListener('reachbell:init', onReInit);
+    let listening = false;
+
+    /** Idempotent teardown, from app.unmount() or Vue's app.onUnmount hook. */
+    const dispose = () => {
+      if (disposed) return;
+      disposed = true;
+      permissionStatus?.removeEventListener('change', syncPermission);
+      permissionStatus = null;
+      if (listening && typeof window !== 'undefined') window.removeEventListener('reachbell:init', onReInit);
+      listening = false;
+    };
 
     /** Runs once, after the root app has mounted (client only). */
     const onAppMounted = () => {
       if (mounted) return;
       mounted = true;
+      // Listen only once mounted, so an app that is installed but never
+      // mounted (tests, SSR-only apps) never leaves a window listener behind.
+      if (typeof window !== 'undefined' && !disposed) {
+        window.addEventListener('reachbell:init', onReInit);
+        listening = true;
+      }
       initSdk();
       trackReady();
       // The first reactive writes wait until hydration (incl. Suspense) is done.
@@ -211,12 +237,14 @@ export const ReachBellPlugin = {
 
     const unmount = app.unmount.bind(app);
     app.unmount = () => {
-      disposed = true;
-      permissionStatus?.removeEventListener('change', syncPermission);
-      permissionStatus = null;
-      if (typeof window !== 'undefined') window.removeEventListener('reachbell:init', onReInit);
+      dispose();
       unmount();
     };
+    // Vue >= 3.5: also tear down through the official hook.
+    const onUnmount = (app as App & { onUnmount?: (cb: () => void) => void }).onUnmount;
+    if (typeof onUnmount === 'function') {
+      try { onUnmount.call(app, dispose); } catch { /* older Vue */ }
+    }
 
     // Installed after app.mount(): our mount hook will never run.
     if (app._container) {
