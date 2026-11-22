@@ -16,10 +16,12 @@
  *
  * Initialising the SDK and touching reactive state are kept apart:
  * prompt/identify/tag may init from setup(), but `permission` and
- * `isReady` only change after the root app has mounted, so SSR
- * hydration sees the same values the server rendered.
+ * `isReady` only change after the root app has mounted and hydration has
+ * finished (nextTick + a frame; in Nuxt, after `app:suspense:resolve`),
+ * so SSR hydration — including async Suspense boundaries — sees the same
+ * values the server rendered.
  */
-import { inject, onMounted, ref, type App, type InjectionKey, type Ref } from 'vue';
+import { inject, nextTick, onMounted, ref, type App, type InjectionKey, type Ref } from 'vue';
 import {
   ReachBell,
   type ReachBellConfig,
@@ -44,13 +46,56 @@ export interface ReachBellApi {
   showToast:  (opts: ToastOptions) => () => void;
   showBanner: (opts: BannerOptions) => () => void;
   showNotificationCenter: (opts?: NotificationCenterOptions) => () => void;
+  /** Re-read the browser permission into `permission` (shared by every consumer). */
+  refreshPermission: () => NotificationPermission | null;
   /** Direct access to the underlying SDK if you need it. */
   sdk:        typeof ReachBell;
 }
 
 const KEY: InjectionKey<ReachBellApi> = Symbol('ReachBell');
 
+/** Per-install "hydration is over" check, used by useNotificationPermission(). */
+const hydratedFor = new WeakMap<ReachBellApi, () => boolean>();
+
 export interface ReachBellPluginOptions extends Omit<ReachBellConfig, 'force'> {}
+
+/** True in development builds (bundlers inline `process.env.NODE_ENV`). */
+function isDev(): boolean {
+  try {
+    return process.env.NODE_ENV !== 'production';
+  } catch {
+    return false; // no bundler / no `process`: treat as production
+  }
+}
+
+/** Minimal shape of Nuxt's app (`app.$nuxt`) used to wait for hydration. */
+interface NuxtLike {
+  isHydrating?: boolean;
+  hooks?: { hookOnce?: (name: string, fn: () => void) => unknown };
+}
+
+/**
+ * Run `fn` once hydration is over. Nuxt resolves async Suspense boundaries
+ * after app.mount() returns, so wait for its `app:suspense:resolve` hook
+ * when it is hydrating; otherwise (and afterwards) wait a tick plus a frame.
+ */
+function afterHydration(app: App, fn: () => void): void {
+  const later = () => {
+    void nextTick(() => {
+      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => fn());
+      else setTimeout(fn, 0);
+    });
+  };
+  const nuxt = ((app as unknown as { $nuxt?: NuxtLike }).$nuxt
+    ?? (app.config?.globalProperties as { $nuxt?: NuxtLike } | undefined)?.$nuxt);
+  if (nuxt?.isHydrating && typeof nuxt.hooks?.hookOnce === 'function') {
+    try {
+      nuxt.hooks.hookOnce('app:suspense:resolve', later);
+      return;
+    } catch { /* fall through to the generic path */ }
+  }
+  later();
+}
 
 /**
  * Vue plugin — install once at the app root.
@@ -62,7 +107,10 @@ export const ReachBellPlugin = {
 
     let initialised = false;
     let mounted = false;
+    /** Hydration finished: reactive state may change from here on. */
+    let hydrated = false;
     let readySettled = false;
+    let trackedReady: Promise<void> | null = null;
     let permissionStatus: PermissionStatus | null = null;
     let disposed = false;
 
@@ -90,6 +138,38 @@ export const ReachBellPlugin = {
     };
 
     /**
+     * Follow the SDK's current boot promise. A (force) re-init swaps it and
+     * dispatches `reachbell:init`, which resets isReady until the new boot
+     * settles. Also follows an SDK the app initialised itself. On an
+     * uninitialised SDK `ready` rejects; that is ignored (the next init
+     * retries). Only writes reactive state once hydration is over, or to
+     * reset an isReady that is already true.
+     */
+    const trackReady = () => {
+      if (typeof window === 'undefined' || disposed) return;
+      let ready: Promise<void>;
+      try {
+        ready = ReachBell.ready;
+      } catch {
+        return;
+      }
+      if (ready === trackedReady) return;
+      trackedReady = ready;
+      readySettled = false;
+      if (isReady.value) isReady.value = false;
+      const settle = () => {
+        if (trackedReady !== ready) return;
+        readySettled = true;
+        if (hydrated && !disposed) markReady();
+      };
+      ready.then(settle, () => {
+        // Our own init failed: the SDK warned-once already, but boot settled.
+        if (initialised) settle();
+        else if (trackedReady === ready) trackedReady = null;
+      });
+    };
+
+    /**
      * Init the SDK only — no reactive writes, so it is safe from setup()
      * during hydration. Skipped on the server and without an apiKey.
      */
@@ -97,22 +177,26 @@ export const ReachBellPlugin = {
       if (initialised || typeof window === 'undefined' || !options?.apiKey) return;
       initialised = true;
       ReachBell.init(options);
-      ReachBell.ready
-        .catch(() => { /* SDK warnOnce already fired */ })
-        .finally(() => {
-          readySettled = true;
-          if (mounted && !disposed) markReady();
-        });
+      trackReady();
     };
+
+    const onReInit = () => trackReady();
+    if (typeof window !== 'undefined') window.addEventListener('reachbell:init', onReInit);
 
     /** Runs once, after the root app has mounted (client only). */
     const onAppMounted = () => {
       if (mounted) return;
       mounted = true;
       initSdk();
-      syncPermission();
-      watchPermission();
-      if (readySettled) markReady();
+      trackReady();
+      // The first reactive writes wait until hydration (incl. Suspense) is done.
+      afterHydration(app, () => {
+        if (disposed) return;
+        hydrated = true;
+        syncPermission();
+        watchPermission();
+        if (readySettled) markReady();
+      });
     };
 
     // Root-only, one-shot hook: app.mount() is client-side (SSR renders
@@ -130,7 +214,22 @@ export const ReachBellPlugin = {
       disposed = true;
       permissionStatus?.removeEventListener('change', syncPermission);
       permissionStatus = null;
+      if (typeof window !== 'undefined') window.removeEventListener('reachbell:init', onReInit);
       unmount();
+    };
+
+    // Installed after app.mount(): our mount hook will never run.
+    if (app._container) {
+      if (isDev()) {
+        // eslint-disable-next-line no-console
+        console.warn('[ReachBell] ReachBellPlugin was installed after app.mount(). Call app.use(ReachBellPlugin, …) before mounting.');
+      }
+      onAppMounted();
+    }
+
+    const refreshPermission = (): NotificationPermission | null => {
+      syncPermission();
+      return permission.value;
     };
 
     const prompt = async (): Promise<SubscribeResult> => {
@@ -153,9 +252,11 @@ export const ReachBellPlugin = {
       showToast:  (opts: ToastOptions) => ReachBell.showToast(opts),
       showBanner: (opts: BannerOptions) => ReachBell.showBanner(opts),
       showNotificationCenter: (opts?: NotificationCenterOptions) => ReachBell.showNotificationCenter(opts),
+      refreshPermission,
       sdk:      ReachBell,
     };
 
+    hydratedFor.set(api, () => hydrated);
     app.provide(KEY, api);
   },
 };
@@ -178,15 +279,14 @@ export function useReachBell(): ReachBellApi {
  * client surface.
  */
 export function useNotificationPermission() {
-  const { permission } = useReachBell();
-  const refresh = () => {
-    if (typeof Notification !== 'undefined') {
-      permission.value = Notification.permission;
-    }
-    return permission.value;
-  };
-  // onMounted is a no-op during SSR.
-  onMounted(refresh);
+  const api = useReachBell();
+  const { permission, refreshPermission: refresh } = api;
+  // onMounted is a no-op during SSR. While the app is still hydrating the
+  // plugin syncs `permission` itself once hydration is over, so only
+  // components mounted after that refresh on mount.
+  onMounted(() => {
+    if (hydratedFor.get(api)?.() !== false) refresh();
+  });
   return { permission, refresh };
 }
 
